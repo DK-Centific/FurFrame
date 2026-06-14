@@ -1193,6 +1193,7 @@ function doLogin() {
   paFetch(LOGIN_PA_URL, { loginId: raw.trim() }, { retries: 1, timeoutMs: 15000 }).then(r => {
     loginBusy(false);
     const j = r && r.json;
+    try { console.log('[FurFrame] login \u2190 status', r && r.status, '| ok', r && r.ok, '| body', (j != null ? j : (r && r.text) || '(empty / unreadable)'), r && r.error ? ('| error ' + r.error) : ''); } catch (_) {}
     const notFound  = j && (j.found === false || j.found === 'false');
     const hasProfile = j && (j.role || j.name || j.loginId);
     if (r.ok && j && !notFound && (j.found === true || j.found === 'true' || hasProfile)) {
