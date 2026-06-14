@@ -1163,6 +1163,9 @@ function renderLogin() {
       '<div class="login-title">Centific Data Collection</div>' +
       '<div class="login-eyebrow">FurFrame · Quality Checklist</div>' +
       '<div class="login-sub">Sign in with your reviewer ID to start a session checklist.</div>' +
+      ((!MOCK_MODE && location.protocol === 'file:') ?
+        '<div class="login-err" style="display:block;background:var(--amber-bg);color:var(--amber-text);padding:10px 12px;border-radius:10px;text-align:left;line-height:1.45;">' +
+        'This page is open as a local file, so the browser blocks sign-in. Open it over <b>http(s)</b> \u2014 your GitHub Pages URL, or run <code>python3 -m http.server</code> and use <b>http://localhost:8000</b>.</div>' : '') +
       '<input id="loginInput" type="text" autocapitalize="off" autocomplete="username" spellcheck="false" placeholder="Enter your reviewer ID" />' +
       '<div class="login-err" id="loginErr"></div>' +
       '<button class="btn btn-primary" style="width:100%" onclick="doLogin()">Sign in</button>' +
@@ -1182,21 +1185,28 @@ function doLogin() {
     completeLogin(profile);
     return;
   }
+  // Browsers block secure calls from a local file. Catch it before the call so
+  // the message is accurate (not a misleading "ID not recognized").
+  if (location.protocol === 'file:') { loginFail(FILE_ORIGIN_MSG); return; }
   // Production: validate against the Login flow.
   loginBusy(true);
   paFetch(LOGIN_PA_URL, { loginId: raw.trim() }, { retries: 1, timeoutMs: 15000 }).then(r => {
     loginBusy(false);
     const j = r && r.json;
-    const found = j && (j.found === true || j.found === 'true');
-    if (r.ok && found && (j.role || j.name)) {
+    const notFound  = j && (j.found === false || j.found === 'false');
+    const hasProfile = j && (j.role || j.name || j.loginId);
+    if (r.ok && j && !notFound && (j.found === true || j.found === 'true' || hasProfile)) {
       completeLogin({ loginId: j.loginId || raw.trim(), name: j.name || raw.trim(), role: j.role || 'Mod', location: j.location || '' });
-    } else if (r.ok) {
+    } else if (r.ok && j && (notFound || !hasProfile)) {
       loginFail('Reviewer ID not recognized. Check spelling and try again.');
     } else {
-      loginFail('Couldn\u2019t reach the sign-in service. Check your connection and try again.');
+      // No readable response: network, CORS, or an opaque file:// origin.
+      loginFail('Couldn\u2019t reach the sign-in service. If you opened the page as a file, host it over http(s) instead.');
     }
   });
 }
+/* Shown when the page is run from disk (file://) instead of a web server. */
+const FILE_ORIGIN_MSG = 'This page is open as a local file, so the browser blocks sign-in. Open it over http(s) \u2014 your GitHub Pages URL, or run "python3 -m http.server" and use http://localhost:8000.';
 function loginFail(msg) {
   const card = $('loginCard'); if (card) { card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake'); }
   const e = $('loginErr'); if (e) e.textContent = msg || 'Reviewer ID not recognized. Check spelling and try again.';
