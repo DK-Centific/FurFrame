@@ -1195,9 +1195,16 @@ function doLogin() {
     const j = r && r.json;
     try { console.log('[FurFrame] login \u2190 status', r && r.status, '| ok', r && r.ok, '| body', (j != null ? j : (r && r.text) || '(empty / unreadable)'), r && r.error ? ('| error ' + r.error) : ''); } catch (_) {}
     const notFound  = j && (j.found === false || j.found === 'false');
-    const hasProfile = j && (j.role || j.name || j.loginId);
+    // Read profile fields case-insensitively so the flow may return either
+    // { found:true, loginId, name, role, location } OR the raw Excel row
+    // ({ LoginId, Name, Role, Location, ... }) — both work.
+    const loginIdV = field(j, 'loginId');
+    const nameV    = field(j, 'name');
+    const roleV    = field(j, 'role');
+    const locV     = field(j, 'location');
+    const hasProfile = !!(roleV || nameV || loginIdV);
     if (r.ok && j && !notFound && (j.found === true || j.found === 'true' || hasProfile)) {
-      completeLogin({ loginId: j.loginId || raw.trim(), name: j.name || raw.trim(), role: j.role || 'Mod', location: j.location || '' });
+      completeLogin({ loginId: loginIdV || raw.trim(), name: nameV || raw.trim(), role: roleV || 'Mod', location: locV || '' });
     } else if (r.ok && j && (notFound || !hasProfile)) {
       loginFail('Reviewer ID not recognized. Check spelling and try again.');
     } else {
@@ -1644,10 +1651,8 @@ async function onScanFile(e) {
 }
 /* Resilient PA call (mirrors Kilo's paFetch): POST JSON, tolerate 200/202 and
    empty async bodies, time out, retry once. Never throws — returns {ok,text,json}.
-   NOTE: Content-Type is text/plain on purpose. Power Automate's HTTP trigger does
-   not answer the CORS preflight that 'application/json' would trigger, so from a
-   browser (GitHub Pages) the real request gets blocked. text/plain makes this a
-   CORS "simple" request (no preflight); PA still parses the body against its schema. */
+   Content-Type is application/json: PA's HTTP trigger has a Request Body JSON
+   Schema, so it rejects other content types (text/plain) with HTTP 400. */
 async function paFetch(url, payload, opts) {
   opts = opts || {};
   const retries = opts.retries != null ? opts.retries : 1;
@@ -1658,15 +1663,19 @@ async function paFetch(url, payload, opts) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload || {}),
         cache: 'no-store',
         signal: controller ? controller.signal : undefined,
       });
       if (timer) clearTimeout(timer);
-      if (!res.ok && res.status !== 200 && res.status !== 202) throw new Error('HTTP ' + res.status);
       const text = await res.text();
       let json = null; try { json = JSON.parse(text); } catch (_) {}
+      if (!res.ok && res.status !== 200 && res.status !== 202) {
+        if (attempt === retries) return { ok: false, status: res.status, text: text, json: json, error: 'HTTP ' + res.status };
+        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+        continue;
+      }
       return { ok: true, status: res.status, text: text, json: json };
     } catch (err) {
       if (timer) clearTimeout(timer);
