@@ -957,7 +957,7 @@ async function loadSessions(force) {
 const OPS_REMINDER = [
   { cat:'Furniture',   cls:'furniture', text:'Arrange furniture so it does not obscure participants — they should be able to walk across the room without much difficulty.' },
   { cat:'Props',       cls:'props',     text:'Place plenty of props in both zones for participants to interact with.' },
-  { cat:'Blind zones', cls:'blind',     text:'D1, D2 and D3 have different FOVs. If participants fall out of view from certain angles, add extra markings. D2 points up, so smaller pets can drop out of view in the Near zone.' },
+  { cat:'Blind zones', cls:'blind',     text:'D2, D4 IR mode and D4 RGB have different FOVs. If participants fall out of view from certain angles, add extra markings. D4 IR mode points up, so smaller pets can drop out of view in the Near zone.' },
 ];
 
 /* =====================================================================
@@ -965,9 +965,8 @@ const OPS_REMINDER = [
    ===================================================================== */
 function blankChecklist() {
   const cl = { sessionInfo: { participantId:'', participantName:'', location:'Redmond', ndaSigned:'', vaccinationChecked:'', furryName:'', furryType:'' },
-               A:{}, B:{}, C:{}, D:{}, E:{} };
-  SECTION_A.forEach(it => cl.A[it.id] = { verified:'', notes:'' });
-  TASKS.forEach(t => cl.B[t.id] = { r1:'', r2:'', pre:'', post:'', d1:'', d2:'', d3:'', notes:'' });
+               B:{}, C:{}, D:{}, E:{} };
+  TASKS.forEach(t => cl.B[t.id] = { r1:'', r2:'', d1:'', d2:'', d3:'', notes:'' });
   NP_RECS.forEach(r => cl.C[r.id] = { verified:'', lighting:r.lighting, humanFov:'', d1:'', d2:'', d3:'', notes:'' });
   SECTION_D.forEach(it => cl.D[it.id] = { verified:'', notes:'' });
   SECTION_E.forEach(it => cl.E[it.id] = { verified:'', notes:'' });
@@ -990,6 +989,41 @@ function saveAuth() {
   try { localStorage.setItem(LS_AUTH, JSON.stringify({ loginId: state.username, name: p.name, role: p.role, location: p.location, view: state.view, section: state.section, theme: state.theme })); } catch (_) {}
 }
 function clearAuth() { try { localStorage.removeItem(LS_AUTH); } catch (_) {} }
+
+/* =====================================================================
+   IN-PROGRESS CHECKLIST PERSISTENCE (per reviewer, per browser)
+   Saves answers + current section so a moderator can log out / refresh and
+   pick up exactly where they left off. Logout no longer wipes this; a
+   successful submit clears it. Stored separately from auth so each reviewer
+   on a shared device keeps their own draft.
+   ===================================================================== */
+const LS_PROGRESS_PREFIX = 'furframe_progress_';
+function progressKey(loginId) { return LS_PROGRESS_PREFIX + canonicalize(loginId || state.username); }
+function saveProgress() {
+  if (!state.username || !state.userProfile || state.userProfile.role === 'Admin') return;  // admins have no checklist
+  try { localStorage.setItem(progressKey(state.username), JSON.stringify({ checklist: state.checklist, section: state.section })); } catch (_) {}
+}
+function loadProgress(loginId) {
+  try { return JSON.parse(localStorage.getItem(progressKey(loginId)) || 'null'); } catch (_) { return null; }
+}
+function clearProgress(loginId) { try { localStorage.removeItem(progressKey(loginId)); } catch (_) {} }
+/* Merge a saved draft over a fresh blank, so older drafts missing newly-added
+   fields (or carrying removed ones) still load cleanly. */
+function restoreChecklistFor(loginId) {
+  const saved = loadProgress(loginId);
+  if (!saved || !saved.checklist) return false;
+  const blank = blankChecklist();
+  const cl = saved.checklist;
+  blank.sessionInfo = Object.assign(blank.sessionInfo, cl.sessionInfo || {});
+  ['B','C','D','E'].forEach(sec => {
+    if (!cl[sec]) return;
+    Object.keys(blank[sec]).forEach(id => { if (cl[sec][id]) blank[sec][id] = Object.assign(blank[sec][id], cl[sec][id]); });
+  });
+  state.checklist = blank;
+  if (saved.section) state.section = saved.section;
+  return true;
+}
+
 function restoreAuth() {
   let a; try { a = JSON.parse(localStorage.getItem(LS_AUTH) || 'null'); } catch (_) { a = null; }
   if (!a || !a.loginId) return false;
@@ -1006,6 +1040,7 @@ function restoreAuth() {
   state.view = a.view || ((profile.role === 'Admin') ? 'dashboard' : 'checklist');
   state.section = a.section || 'info';
   if (a.theme) state.theme = a.theme;
+  if (profile.role !== 'Admin') restoreChecklistFor(profile.loginId);   // bring back any in-progress draft
   return true;
 }
 
@@ -1070,7 +1105,6 @@ function sectionStatus(secKey) {
   return done ? 'complete' : 'in_progress';
 }
 function collectRowQCs(secKey) {
-  if (secKey === 'A') return SECTION_A.map(it => simpleQC('A', it.id));
   if (secKey === 'B') return TASKS.map(t => taskQC(t.id));
   if (secKey === 'C') return NP_RECS.map(r => npQC(r.id));
   if (secKey === 'D') return SECTION_D.map(it => simpleQC('D', it.id));
@@ -1081,7 +1115,7 @@ function collectRowQCs(secKey) {
 /* Roll-up across the whole checklist (sidebar chips + submit gate). */
 function rollup() {
   let pass=0, review=0, fail=0;
-  ['A','B','C','D','E'].forEach(sec => collectRowQCs(sec).forEach(q => {
+  ['B','C','D','E'].forEach(sec => collectRowQCs(sec).forEach(q => {
     if (q === 'pass') pass++; else if (q === 'fail') fail++; else if (q === 'review') review++;
   }));
   return { pass, review, fail };
@@ -1226,10 +1260,13 @@ function completeLogin(profile) {
   state.view = (profile.role === 'Admin') ? 'dashboard' : 'checklist';
   state.section = 'info';
   state.sessions = null; _sessionsState.loaded = false; _sessionsState.loading = false;
+  let resumed = false;
+  if (profile.role !== 'Admin') resumed = restoreChecklistFor(profile.loginId);   // pick up any saved draft
   saveAuth();
   render();
-  if (profile.role !== 'Admin') setTimeout(openWelcome, 360);   // any non-admin is a moderator
-  else showToast('Signed in as ' + profile.name, 'success');
+  if (profile.role === 'Admin') showToast('Signed in as ' + profile.name, 'success');
+  else if (resumed) showToast('Welcome back \u2014 resuming your checklist', 'success', 3200);
+  else setTimeout(openWelcome, 360);   // fresh start: greet + offer check-in
 }
 
 function logout() {
@@ -1298,7 +1335,6 @@ function toggleSidebar() {
    ===================================================================== */
 const SECTIONS = [
   { key:'info', name:'Session info' },
-  { key:'A',    name:'A · Pre-session setup' },
   { key:'B',    name:'B · Task recording log' },
   { key:'C',    name:'C · No-person task' },
   { key:'D',    name:'D · Video QC spot-check' },
@@ -1360,6 +1396,7 @@ function gotoSection(key) {
   state.section = key;
   renderChecklistShell();
   saveAuth();
+  saveProgress();
   requestAnimationFrame(() => {
     if (key === 'info') { window.scrollTo(0, 0); return; }
     const bar = document.querySelector('.fr-entrybar') || $('mainPanel');
@@ -1371,8 +1408,7 @@ function gotoSection(key) {
 function sectionPanelHTML(key) {
   if (key === 'info') return infoPanelHTML();
   let body = '';
-  if (key === 'A') body = simpleSectionHTML('A', 'Section A — Pre-session environment & device setup', '5 setup items · verify each before the session', SECTION_A);
-  else if (key === 'B') body = taskSectionHTML();
+  if (key === 'B') body = taskSectionHTML();
   else if (key === 'C') body = npSectionHTML();
   else if (key === 'D') body = simpleSectionHTML('D', 'Section D — Video quality spot-check', '10 QC items (D1–D10) · verify each', SECTION_D);
   else if (key === 'E') body = simpleSectionHTML('E', 'Section E — End of day', 'Last-session moderators only', SECTION_E);
@@ -1502,6 +1538,7 @@ function submitCheckIn() {
   closeModal();
   state.section = 'info';
   render();
+  saveProgress();
   showToast('Checked in \u2014 ' + si.participantName, 'success');
 }
 
@@ -1806,10 +1843,6 @@ function taskSectionHTML() {
         (t.lightOnly ? '' : '<div class="ctrl"><span class="ctrl-label">R2 dark</span>' + segYNN('B', t.id, 'r2', r.r2) + '</div>') +
         '<div class="ctrl"><span class="ctrl-label">Uploaded</span>' + uploadsHTML('B', t.id, r) + '</div>' +
       '</div>' +
-      '<div class="ctrls" style="margin-top:8px;">' +
-        '<div class="ctrl"><span class="ctrl-label">Pre 20s buffer</span>' + segYNN('B', t.id, 'pre', r.pre) + '</div>' +
-        '<div class="ctrl"><span class="ctrl-label">Post 20s buffer</span>' + segYNN('B', t.id, 'post', r.post) + '</div>' +
-      '</div>' +
       notesHTML('B', t.id, r.notes) +
     '</div>';
   }).join('');
@@ -1864,7 +1897,7 @@ function panelWrap(title, sub, body, nav) {
     body + '<div class="panel-nav">' + nav + '</div></div>';
 }
 function prevNextFor(secKey) {
-  const order = ['info','A','B','C','D','E'];
+  const order = ['info','B','C','D','E'];
   const i = order.indexOf(secKey);
   const prev = i > 0 ? '<button class="btn btn-secondary" onclick="gotoSection(\'' + order[i-1] + '\')">← Back</button>' : '<span></span>';
   const gated = (secKey === 'B' || secKey === 'C');
@@ -1927,6 +1960,7 @@ function setSeg(sid, v) {
   });
   refreshRow(secKey, id);
   refreshSidebarLive();
+  saveProgress();
 }
 function setNPLighting(recId, opt) {
   state.checklist.C[recId].lighting = opt;
@@ -1934,6 +1968,7 @@ function setNPLighting(recId, opt) {
   // update chips in place
   const row = $('row_' + uid);
   if (row) row.querySelectorAll('.optchip').forEach(c => c.classList.toggle('sel', c.textContent.trim() === opt));
+  saveProgress();
 }
 
 /* Recompute a single row's QC chip + flag class in place. */
@@ -1958,12 +1993,14 @@ function refreshSidebarLive() {
   const pf = $('progFill'); if (pf) pf.style.width = pct + '%';
 }
 
-/* Uploads (D1/D2/D3) — tap to cycle blank -> yes -> no -> blank. */
+/* Uploads — the three capture-device streams. Internal keys stay d1/d2/d3 so
+   saved data + QC math are unchanged; only the visible labels are remapped. */
+const DEV_LABELS = { d1: 'D2', d2: 'D4 IR mode', d3: 'D4 RGB' };
 function uploadsHTML(secKey, id, r) {
   const mk = (dev) => {
     const v = r[dev];
     const cls = v==='yes' ? 'yes' : (v==='no' ? 'no' : '');
-    const label = dev.toUpperCase() + (v==='yes'?' ✓':(v==='no'?' ✕':''));
+    const label = DEV_LABELS[dev] + (v==='yes'?' ✓':(v==='no'?' ✕':''));
     return '<span class="dev ' + cls + '" id="up_' + segId(secKey+':'+id+':'+dev) + '" onclick="cycleUpload(\'' + secKey + '\',\'' + id + '\',\'' + dev + '\')">' + label + '</span>';
   };
   return '<span class="uploads">' + mk('d1') + mk('d2') + mk('d3') + '</span>';
@@ -1974,9 +2011,10 @@ function cycleUpload(secKey, id, dev) {
   const next = cur===''?'yes':(cur==='yes'?'no':'');
   store[dev] = next;
   const el = $('up_' + segId(secKey+':'+id+':'+dev));
-  if (el) { el.className = 'dev ' + (next==='yes'?'yes':(next==='no'?'no':'')); el.textContent = dev.toUpperCase() + (next==='yes'?' ✓':(next==='no'?' ✕':'')); }
+  if (el) { el.className = 'dev ' + (next==='yes'?'yes':(next==='no'?'no':'')); el.textContent = DEV_LABELS[dev] + (next==='yes'?' ✓':(next==='no'?' ✕':'')); }
   refreshRow(secKey, id);
   refreshSidebarLive();
+  saveProgress();
 }
 
 /* Notes — bound on input WITHOUT re-render (mobile keyboard guard). */
@@ -1989,6 +2027,7 @@ function attachNotesHandlers() {
       const parts = ta.getAttribute('data-notes').split('|'); const secKey = parts[0], id = parts[1];
       const store = (secKey==='B') ? state.checklist.B[Number(id)] : state.checklist[secKey][id];
       store.notes = ta.value;   // no render — keeps focus / keyboard
+      saveProgress();
     });
   });
   document.querySelectorAll('input[data-info]').forEach(inp => {
@@ -2062,7 +2101,6 @@ function openReview() {
 }
 function collectFailItems() {
   const out = [];
-  SECTION_A.forEach(it => { if (simpleQC('A', it.id)==='fail') out.push({ tag:'A-'+it.id, text:it.name }); });
   TASKS.forEach(t => { if (taskQC(t.id)==='fail') out.push({ tag:'B-'+String(t.id).padStart(2,'0'), text:t.name }); });
   NP_RECS.forEach(rec => { if (npQC(rec.id)==='fail') out.push({ tag:'C-'+rec.id, text:'No-person · ' + rec.lux + (state.checklist.C[rec.id].humanFov==='yes'?' (human in FOV)':'') }); });
   SECTION_D.forEach(it => { if (simpleQC('D', it.id)==='fail') out.push({ tag:'D-'+it.id, text:it.name }); });
@@ -2077,7 +2115,7 @@ function overallQc() {
 }
 
 function buildSavePayload(si, oqc, r) {
-  const detail = { sessionInfo: si, A: state.checklist.A, B: state.checklist.B, C: state.checklist.C, D: state.checklist.D, E: state.checklist.E };
+  const detail = { sessionInfo: si, B: state.checklist.B, C: state.checklist.C, D: state.checklist.D, E: state.checklist.E };
   const fails = collectFailItems().map(f => ({ tag: f.tag, text: f.text }));
   return {
     sessionId: 's_' + Date.now(),
@@ -2118,6 +2156,7 @@ function submitChecklist() {
       uploadsConfirmed: uploadsConfirmed(), fails: collectFailItems().map(f => ({ tag:f.tag, text:f.text })),
     });
     showToast('Checklist submitted (' + oqc.toUpperCase() + ') — demo mode, stored locally', 'success', 3600);
+    clearProgress(state.username);
     state.checklist = blankChecklist();
     state.section = 'info';
     render();
@@ -2130,6 +2169,7 @@ function submitChecklist() {
     const ok = res.ok && (!res.json || res.json.ok !== false);
     if (ok) {
       showToast('Checklist submitted (' + oqc.toUpperCase() + ')', 'success', 3600);
+      clearProgress(state.username);
       state.checklist = blankChecklist();
       state.section = 'info';
       _sessionsState.loaded = false;     // My Sessions will reload next time it opens
