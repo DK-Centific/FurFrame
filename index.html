@@ -464,7 +464,7 @@ textarea.notes::placeholder { color: var(--text3); }
 .ops { border: 0.5px solid var(--border); border-radius: var(--r); overflow: hidden; }
 .ops-row { display: flex; gap: 12px; align-items: flex-start; padding: 13px 15px; }
 .ops-row + .ops-row { border-top: 0.5px solid var(--border); }
-.ops-cat { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 3px 11px; border-radius: 99px; letter-spacing: 0.02em; white-space: nowrap; }
+.ops-cat { flex-shrink: 0; min-width: 96px; text-align: center; font-size: 11px; font-weight: 600; padding: 3px 11px; border-radius: 99px; letter-spacing: 0.02em; white-space: nowrap; box-sizing: border-box; }
 .ops-cat.furniture { background: var(--blue-bg);  color: var(--blue-text); }
 .ops-cat.props     { background: var(--green-bg); color: var(--green-text); }
 .ops-cat.blind     { background: var(--amber-bg); color: var(--amber-text); }
@@ -816,8 +816,8 @@ const SECTION_D = [
 
 /* Section E — end of day (last-session moderators only). */
 const SECTION_E = [
-  { id: 'E1', name: 'D1 memory cleaned?' },
-  { id: 'E2', name: 'D2 memory cleaned?' },
+  { id: 'E1', name: 'D2 memory cleaned?' },
+  { id: 'E2', name: 'D4 memory cleaned?' },
   { id: 'E3', name: 'Devices placed in locker?' },
 ];
 
@@ -845,7 +845,6 @@ const SOP = {
     ['Per session', '22 participant + 1 registration = 23', ''],
     ['No-Person',   '6 recordings (mod only)', ''],
     ['Daily total', '28 participant + 6 No-Person = 34', ''],
-    ['Duration',    'Participant videos ≥ 2 min on D3', ''],
   ],
 };
 
@@ -2059,7 +2058,6 @@ function sopDrawerHTML() {
       '<h3>SOP quick reference</h3>' +
       '<div class="drawer-sub">FurFrame · the same guidance attached to each checklist item.</div>' +
       block('Lighting range definitions', 'lighting') +
-      block('Device height requirements', 'heights') +
       block('Distance zone definitions', 'zones') +
       block('Task summary', 'tasks') +
       legend +
