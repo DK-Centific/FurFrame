@@ -684,7 +684,7 @@ textarea.notes::placeholder { color: var(--text3); }
    this offline demo path alive for client demos.
    ===================================================================== */
 
-const APP_VERSION = '0.1.061426';   // MAJOR.MINOR.MMDDYY — bump MMDDYY each change
+const APP_VERSION = '0.1.061526';   // MAJOR.MINOR.MMDDYY — bump MMDDYY each change
 const MOCK_MODE   = false;          // true = in-memory demo; false = call PA flows
 
 /* Power Automate flow URLs (production). */
@@ -1643,7 +1643,11 @@ async function onScanFile(e) {
   renderScanModal();
 }
 /* Resilient PA call (mirrors Kilo's paFetch): POST JSON, tolerate 200/202 and
-   empty async bodies, time out, retry once. Never throws — returns {ok,text,json}. */
+   empty async bodies, time out, retry once. Never throws — returns {ok,text,json}.
+   NOTE: Content-Type is text/plain on purpose. Power Automate's HTTP trigger does
+   not answer the CORS preflight that 'application/json' would trigger, so from a
+   browser (GitHub Pages) the real request gets blocked. text/plain makes this a
+   CORS "simple" request (no preflight); PA still parses the body against its schema. */
 async function paFetch(url, payload, opts) {
   opts = opts || {};
   const retries = opts.retries != null ? opts.retries : 1;
@@ -1654,7 +1658,7 @@ async function paFetch(url, payload, opts) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify(payload || {}),
         cache: 'no-store',
         signal: controller ? controller.signal : undefined,
