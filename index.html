@@ -470,6 +470,26 @@ textarea.notes::placeholder { color: var(--text3); }
 .ops-cat.blind     { background: var(--amber-bg); color: var(--amber-text); }
 .ops-text { font-size: 13px; line-height: 1.55; color: var(--text2); }
 
+/* Admin landing tiles */
+.home-hub { max-width: 720px; margin: 0 auto; padding: 52px 20px 48px; }
+.home-hub-head { text-align: center; margin-bottom: 30px; }
+.home-hub-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+.home-hub-title { font-size: clamp(26px, 4vw, 38px); font-weight: 600; letter-spacing: -0.03em; }
+.home-hub-sub { font-size: 14px; color: var(--text2); margin-top: 8px; }
+.home-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.home-tile { width: 100%; display: flex; flex-direction: column; gap: 12px; text-align: left; cursor: pointer; background: var(--card-bg); border: 0.5px solid var(--border); border-radius: 20px; padding: 28px 24px; min-height: 196px; box-shadow: var(--shadow-sm); font-family: var(--font); color: var(--text); transition: transform .25s cubic-bezier(.34,1.2,.64,1), box-shadow .25s ease, border-color .25s ease; }
+.home-tile:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); border-color: var(--border-strong); }
+.home-tile:active { transform: scale(.99); }
+.home-tile-icon { width: 58px; height: 58px; border-radius: 16px; display: flex; align-items: center; justify-content: center; }
+.home-tile-icon svg { width: 30px; height: 30px; }
+.home-tile-icon.pink { background: rgba(239,67,179,0.15); color: var(--accent); }
+.home-tile-icon.blue { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.home-tile-label { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; }
+.home-tile-desc { font-size: 13.5px; color: var(--text2); line-height: 1.5; }
+.home-tile-cta { margin-top: auto; font-size: 13px; font-weight: 600; color: var(--accent); display: flex; align-items: center; gap: 5px; }
+.home-tile-cta svg { width: 14px; height: 14px; }
+@media (max-width: 640px) { .home-tiles { grid-template-columns: 1fr; } .home-hub { padding-top: 40px; } }
+
 /* ---- My Sessions: filters, header, rows ---- */
 .ms-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
 .ms-sep { width: 1px; align-self: stretch; background: var(--border-strong); margin: 2px 4px; }
@@ -696,6 +716,13 @@ const FEEDBACK_PA_URL  = 'https://default9b415834803a4da0afdcfe6b1d52d6.49.envir
    POST { imageBase64 } -> { text }; we parse the returned text for the PID + name. */
 const SCAN_PA_URL = 'https://default9b415834803a4da0afdcfe6b1d52d6.49.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/f2a20969096e4bbaa66906ddebea3d03/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kBWJCbm7eSF9aba1Ir7KCz0L3aMyNZQLUU2wCM2Y91c';
 
+/* In-progress checklist cloud sync (cross-device). Leave both empty to run
+   local-only (localStorage) with no behaviour change. Paste the two flow URLs
+   once the SessionDraft table + Save Draft / Get Draft flows exist, and the app
+   automatically syncs each reviewer's draft to the cloud and back. */
+const DRAFT_SAVE_PA_URL = 'https://default9b415834803a4da0afdcfe6b1d52d6.49.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/02ecb373cc7c484584103602a0ddaeb3/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=jSWN4y_MuaAFFSn7hmUEI2cqFIyek7JwH_nLUe-0Tm8';   // POST { loginId, draftJson, updatedAt } -> upsert one row per reviewer
+const DRAFT_LOAD_PA_URL = 'https://default9b415834803a4da0afdcfe6b1d52d6.49.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d14bf3fd7c164a8aa47197a8b8cfb836/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=RY9ZgGvgqb2008ipda5tVBeHEcg3zlUpiclq_AIzJ7M';   // POST { loginId } -> the reviewer's draft row (or null)
+
 /* =====================================================================
    HELPERS
    ===================================================================== */
@@ -872,7 +899,7 @@ let _sessionsState = { loaded: false, loading: false };
 function getSessions() { return MOCK_MODE ? MOCK_SESSIONS : (state.sessions || []); }
 function viewNeedsSessions() {
   if (!state.userProfile) return false;
-  if (state.userProfile.role === 'Admin') return true;   // both admin tabs use sessions
+  if (state.userProfile.role === 'Admin') return state.view === 'dashboard' || state.view === 'moderators';
   return state.view === 'submissions';                    // moderator: only My Sessions
 }
 function sessionsArrayFrom(r) {
@@ -990,26 +1017,37 @@ function saveAuth() {
 function clearAuth() { try { localStorage.removeItem(LS_AUTH); } catch (_) {} }
 
 /* =====================================================================
-   IN-PROGRESS CHECKLIST PERSISTENCE (per reviewer, per browser)
-   Saves answers + current section so a moderator can log out / refresh and
-   pick up exactly where they left off. Logout no longer wipes this; a
-   successful submit clears it. Stored separately from auth so each reviewer
-   on a shared device keeps their own draft.
+   IN-PROGRESS CHECKLIST PERSISTENCE  (cloud-first, local fallback)
+   • Local (localStorage) saves instantly on every change for offline safety
+     and zero-latency resume on the same device.
+   • Cloud (SessionDraft table via two PA flows) mirrors the draft so a
+     moderator can resume on ANY device. Writes are debounced; section
+     changes / check-in / submit flush immediately. Reads on sign-in & refresh
+     reconcile by timestamp (last write wins).
+   • With DRAFT_*_PA_URL empty the cloud paths are no-ops -> pure local mode.
+   A successful submit clears both; logout leaves the draft intact.
    ===================================================================== */
 const LS_PROGRESS_PREFIX = 'furframe_progress_';
 function progressKey(loginId) { return LS_PROGRESS_PREFIX + canonicalize(loginId || state.username); }
+function isDraftUser() { return !!(state.username && state.userProfile && state.userProfile.role !== 'Admin'); }
+function draftPayload() { return { checklist: state.checklist, section: state.section }; }
+
 function saveProgress() {
-  if (!state.username || !state.userProfile || state.userProfile.role === 'Admin') return;  // admins have no checklist
-  try { localStorage.setItem(progressKey(state.username), JSON.stringify({ checklist: state.checklist, section: state.section })); } catch (_) {}
+  if (!isDraftUser()) return;                       // admins have no checklist
+  const stamp = new Date().toISOString();
+  try { localStorage.setItem(progressKey(state.username), JSON.stringify({ checklist: state.checklist, section: state.section, updatedAt: stamp })); } catch (_) {}
+  scheduleCloudSave();                              // mirror to cloud (debounced)
 }
 function loadProgress(loginId) {
   try { return JSON.parse(localStorage.getItem(progressKey(loginId)) || 'null'); } catch (_) { return null; }
 }
-function clearProgress(loginId) { try { localStorage.removeItem(progressKey(loginId)); } catch (_) {} }
+function clearProgress(loginId) {
+  try { localStorage.removeItem(progressKey(loginId)); } catch (_) {}
+  cloudSaveNow();                                   // push the now-blank draft so cloud doesn't re-restore it
+}
 /* Merge a saved draft over a fresh blank, so older drafts missing newly-added
    fields (or carrying removed ones) still load cleanly. */
-function restoreChecklistFor(loginId) {
-  const saved = loadProgress(loginId);
+function applyDraft(saved) {
   if (!saved || !saved.checklist) return false;
   const blank = blankChecklist();
   const cl = saved.checklist;
@@ -1022,6 +1060,68 @@ function restoreChecklistFor(loginId) {
   if (saved.section) state.section = saved.section;
   return true;
 }
+function restoreChecklistFor(loginId) { return applyDraft(loadProgress(loginId)); }
+
+/* ---- Cloud save (debounced upsert) ---- */
+const CLOUD_SAVE_DEBOUNCE_MS = 3000;
+let _cloudSave = { timer: null, inflight: false, again: false };
+function scheduleCloudSave() {
+  if (!DRAFT_SAVE_PA_URL || !isDraftUser()) return;
+  if (_cloudSave.inflight) { _cloudSave.again = true; return; }
+  if (_cloudSave.timer) clearTimeout(_cloudSave.timer);
+  _cloudSave.timer = setTimeout(flushCloudSave, CLOUD_SAVE_DEBOUNCE_MS);
+}
+async function flushCloudSave() {
+  _cloudSave.timer = null;
+  if (!DRAFT_SAVE_PA_URL || !isDraftUser()) return;
+  _cloudSave.inflight = true;
+  try {
+    await paFetch(DRAFT_SAVE_PA_URL, { loginId: state.username, draftJson: JSON.stringify(draftPayload()), updatedAt: new Date().toISOString() }, { retries: 1, timeoutMs: 15000 });
+  } catch (_) {}
+  _cloudSave.inflight = false;
+  if (_cloudSave.again) { _cloudSave.again = false; scheduleCloudSave(); }
+}
+/* Flush immediately (section change / check-in / submit) — bypasses the debounce. */
+function cloudSaveNow() {
+  if (!DRAFT_SAVE_PA_URL || !isDraftUser()) return;
+  if (_cloudSave.timer) { clearTimeout(_cloudSave.timer); _cloudSave.timer = null; }
+  try { paFetch(DRAFT_SAVE_PA_URL, { loginId: state.username, draftJson: JSON.stringify(draftPayload()), updatedAt: new Date().toISOString() }, { retries: 1, timeoutMs: 15000 }); } catch (_) {}
+}
+
+/* ---- Cloud load + reconcile (last write wins by timestamp) ---- */
+async function cloudLoadProgress(loginId) {
+  if (!DRAFT_LOAD_PA_URL) return null;
+  const r = await paFetch(DRAFT_LOAD_PA_URL, { loginId: loginId }, { retries: 1, timeoutMs: 15000 });
+  if (!r || !r.ok) return null;
+  let row = r.json;
+  if (Array.isArray(row)) row = row[0];
+  else if (row && Array.isArray(row.value)) row = row.value[0];
+  else if (row && Array.isArray(row.rows)) row = row.rows[0];
+  if (!row || typeof row !== 'object') return null;
+  const draftStr = field(row, 'DraftJson');
+  if (!draftStr) return null;
+  let draft; try { draft = (typeof draftStr === 'object') ? draftStr : JSON.parse(draftStr); } catch (_) { return null; }
+  return { checklist: draft.checklist, section: draft.section, updatedAt: field(row, 'UpdatedAt') || '' };
+}
+async function reconcileCloudDraft() {
+  if (!DRAFT_LOAD_PA_URL || !isDraftUser()) return;
+  const who = state.username;
+  let cloud; try { cloud = await cloudLoadProgress(who); } catch (_) { return; }
+  if (who !== state.username) return;               // user changed while we waited
+  if (!cloud || !cloud.checklist) return;
+  const local = loadProgress(who);
+  const cloudT = parseTsToEpoch(cloud.updatedAt) || 0;
+  const localT = (local && local.updatedAt) ? (parseTsToEpoch(local.updatedAt) || 0) : 0;
+  if (cloudT > localT) {
+    applyDraft(cloud);                              // cloud is newer -> adopt it
+    try { localStorage.setItem(progressKey(who), JSON.stringify({ checklist: state.checklist, section: state.section, updatedAt: cloud.updatedAt })); } catch (_) {}
+    if (state.userProfile.role !== 'Admin' && state.view === 'checklist') renderChecklistShell();
+    showToast('Synced your latest checklist from the cloud', 'success', 2600);
+  } else if (localT > cloudT) {
+    scheduleCloudSave();                            // local is newer -> push up
+  }
+}
+
 
 function restoreAuth() {
   let a; try { a = JSON.parse(localStorage.getItem(LS_AUTH) || 'null'); } catch (_) { a = null; }
@@ -1036,7 +1136,7 @@ function restoreAuth() {
   }
   state.username = profile.loginId;
   state.userProfile = profile;
-  state.view = a.view || ((profile.role === 'Admin') ? 'dashboard' : 'checklist');
+  state.view = a.view || ((profile.role === 'Admin') ? 'home' : 'checklist');
   state.section = a.section || 'info';
   if (a.theme) state.theme = a.theme;
   if (profile.role !== 'Admin') restoreChecklistFor(profile.loginId);   // bring back any in-progress draft
@@ -1173,6 +1273,8 @@ function render() {
     return;
   }
   if (state.userProfile.role === 'Admin') {
+    if (state.view === 'home') { renderAdminHome(); return; }
+    if (state.view === 'checklist') { renderChecklistShell(); return; }
     (state.view === 'moderators') ? renderModeratorsShell() : renderDashboardShell();
     return;
   }
@@ -1256,7 +1358,7 @@ function loginBusy(b) { const e = $('loginErr'); if (e) e.textContent = b ? 'Sig
 function completeLogin(profile) {
   state.username = profile.loginId;
   state.userProfile = profile;
-  state.view = (profile.role === 'Admin') ? 'dashboard' : 'checklist';
+  state.view = (profile.role === 'Admin') ? 'home' : 'checklist';
   state.section = 'info';
   state.sessions = null; _sessionsState.loaded = false; _sessionsState.loading = false;
   let resumed = false;
@@ -1266,6 +1368,7 @@ function completeLogin(profile) {
   if (profile.role === 'Admin') showToast('Signed in as ' + profile.name, 'success');
   else if (resumed) showToast('Welcome back \u2014 resuming your checklist', 'success', 3200);
   else setTimeout(openWelcome, 360);   // fresh start: greet + offer check-in
+  if (profile.role !== 'Admin') reconcileCloudDraft();   // adopt a newer cloud draft if one exists
 }
 
 function logout() {
@@ -1279,12 +1382,21 @@ function navHTML() {
   const role = state.userProfile.role;
   const brandSub = (role === 'Admin') ? 'FurFrame · Admin' : 'FurFrame · Quality Checklist';
   let viewSwitch = '';
+  let homeBtn = '';
   if (role === 'Admin') {
-    viewSwitch =
-      '<div class="viewswitch">' +
-        '<button class="' + (state.view==='dashboard'?'active':'') + '" onclick="switchView(\'dashboard\')">Dashboard</button>' +
-        '<button class="' + (state.view==='moderators'?'active':'') + '" onclick="switchView(\'moderators\')">Moderators</button>' +
-      '</div>';
+    // Home button returns to the tile landing (hidden when already there).
+    if (state.view !== 'home') {
+      homeBtn = '<button class="icon-btn" aria-label="Home" title="Home" onclick="switchView(\'home\')">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/></svg></button>';
+    }
+    // Dashboard/Moderators tabs only while inside those views.
+    if (state.view === 'dashboard' || state.view === 'moderators') {
+      viewSwitch =
+        '<div class="viewswitch">' +
+          '<button class="' + (state.view==='dashboard'?'active':'') + '" onclick="switchView(\'dashboard\')">Dashboard</button>' +
+          '<button class="' + (state.view==='moderators'?'active':'') + '" onclick="switchView(\'moderators\')">Moderators</button>' +
+        '</div>';
+    }
   } else {
     viewSwitch =
       '<div class="viewswitch">' +
@@ -1292,14 +1404,18 @@ function navHTML() {
         '<button class="' + (state.view==='submissions'?'active':'') + '" onclick="switchView(\'submissions\')">My Sessions</button>' +
       '</div>';
   }
+  // The section menu (☰) only makes sense in the checklist (it toggles the sections sidebar).
+  const showMenu = (role !== 'Admin') || (state.view === 'checklist');
+  const menuBtn = showMenu
+    ? '<button class="icon-btn menu-toggle" aria-label="Sections" onclick="toggleSidebar()">' + svgMenu() + '</button>'
+    : '';
   return '<nav><div class="app-shell" style="display:flex;align-items:flex-end;width:100%;height:52px;padding-bottom:0;">' +
-    '<div class="nav-left">' +
-      '<button class="icon-btn menu-toggle" aria-label="Sections" onclick="toggleSidebar()">' + svgMenu() + '</button>' +
+    '<div class="nav-left">' + menuBtn +
       '<div class="brand"><div class="brand-mark" role="img" aria-label="Centific"></div>' +
       '<div class="brand-textwrap"><div class="brand-text">Centific Data Collection</div>' +
       '<div class="brand-sub">' + escapeHTML(brandSub) + '</div></div></div>' +
     '</div>' +
-    '<div class="nav-right">' + viewSwitch +
+    '<div class="nav-right">' + viewSwitch + homeBtn +
       '<span class="ver">v' + APP_VERSION + '</span>' +
       '<button class="icon-btn" aria-label="Theme" onclick="toggleTheme()">' + svgTheme() + '</button>' +
       '<button class="icon-btn" aria-label="Sign out" title="Sign out" onclick="logout()">' +
@@ -1307,6 +1423,33 @@ function navHTML() {
       '</button>' +
     '</div>' +
   '</div></nav>';
+}
+
+/* Admin landing — two big tiles to pick Dashboard or the Checklist. */
+function renderAdminHome() {
+  document.documentElement.setAttribute('data-theme', state.theme);
+  const first = (state.userProfile.name || '').split(' ')[0] || 'there';
+  const tile = (view, variant, icon, label, desc) =>
+    '<button class="home-tile" onclick="switchView(\'' + view + '\')">' +
+      '<span class="home-tile-icon ' + variant + '">' + icon + '</span>' +
+      '<span class="home-tile-label">' + label + '</span>' +
+      '<span class="home-tile-desc">' + desc + '</span>' +
+      '<span class="home-tile-cta">Open <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5 10.5 8 6 12.5"/></svg></span>' +
+    '</button>';
+  const dashIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="8"/><line x1="18" y1="20" x2="18" y2="11"/></svg>';
+  const clipIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1z"/><path d="M8 6H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-2"/><path d="m9 13 2 2 4-4"/></svg>';
+  $('root').innerHTML = navHTML() +
+    '<div class="app-shell"><div class="home-hub">' +
+      '<div class="home-hub-head">' +
+        '<div class="home-hub-eyebrow">FurFrame \u00b7 Admin</div>' +
+        '<div class="home-hub-title">Welcome, ' + escapeHTML(first) + '</div>' +
+        '<div class="home-hub-sub">Choose where to go \u2014 switch any time from the top bar.</div>' +
+      '</div>' +
+      '<div class="home-tiles">' +
+        tile('dashboard', 'blue', dashIcon, 'Dashboard', 'Live QC metrics, collection progress, and per-moderator breakdowns.') +
+        tile('checklist', 'pink', clipIcon, 'Session Checklist', 'Open the quality checklist to review or complete a session.') +
+      '</div>' +
+    '</div></div>';
 }
 
 function switchView(v) { state.view = v; saveAuth(); render(); }
@@ -1396,6 +1539,7 @@ function gotoSection(key) {
   renderChecklistShell();
   saveAuth();
   saveProgress();
+  cloudSaveNow();   // commit at every section boundary so little is lost mid-edit
   requestAnimationFrame(() => {
     if (key === 'info') { window.scrollTo(0, 0); return; }
     const bar = document.querySelector('.fr-entrybar') || $('mainPanel');
@@ -1451,7 +1595,7 @@ function infoPanelHTML() {
     '<div style="margin-top:22px;"><div class="side-label" style="color:var(--accent-ink);margin-bottom:10px;">Operations reminder</div>' +
     '<div class="ops">' + ops + '</div></div>' +
     '<div class="panel-nav"><span></span>' +
-    '<button class="btn btn-primary" onclick="gotoSection(\'A\')">Next: Section A &#8594;</button></div>' +
+    '<button class="btn btn-primary" onclick="gotoSection(\'B\')">Session start &#8594;</button></div>' +
   '</div>';
 }
 
@@ -2154,9 +2298,9 @@ function submitChecklist() {
       uploadsConfirmed: uploadsConfirmed(), fails: collectFailItems().map(f => ({ tag:f.tag, text:f.text })),
     });
     showToast('Checklist submitted (' + oqc.toUpperCase() + ') — demo mode, stored locally', 'success', 3600);
-    clearProgress(state.username);
     state.checklist = blankChecklist();
     state.section = 'info';
+    clearProgress(state.username);   // clears local + pushes the blank draft to cloud
     render();
     return;
   }
@@ -2167,9 +2311,9 @@ function submitChecklist() {
     const ok = res.ok && (!res.json || res.json.ok !== false);
     if (ok) {
       showToast('Checklist submitted (' + oqc.toUpperCase() + ')', 'success', 3600);
-      clearProgress(state.username);
       state.checklist = blankChecklist();
       state.section = 'info';
+      clearProgress(state.username);   // clears local + pushes the blank draft to cloud
       _sessionsState.loaded = false;     // My Sessions will reload next time it opens
       render();
       loadSessions(true);                // refresh the cache in the background
@@ -2647,6 +2791,7 @@ console.log('[FurFrame] Quality Checklist v' + APP_VERSION + ' · MOCK_MODE=' + 
 restoreAuth();
 document.documentElement.setAttribute('data-theme', state.theme);
 render();
+if (state.username && state.userProfile && state.userProfile.role !== 'Admin') reconcileCloudDraft();   // refresh: adopt newer cloud draft
 </script>
 </body>
 </html>
