@@ -2382,9 +2382,6 @@ function msRowHTML(s) {
    ADMIN DASHBOARD
    ===================================================================== */
 let dashFilters = { period:'all', moderator:'all', reviewer:'all' };   // Redmond-only: no location filter
-const COLLECTION_GOAL = 100;
-const COLLECTION_BASELINE = 79;   // demo: approved sets already banked before this view
-
 function renderDashboardShell() {
   document.documentElement.setAttribute('data-theme', state.theme);
   $('root').innerHTML = navHTML() +
@@ -2424,7 +2421,7 @@ function dashboardInnerHTML() {
       kpi('Upload completion', upPct + '%', 'accent', upConf + ' / ' + upExp + ' rows') +
     '</div>' +
     '<div class="chart-grid-2">' +
-      targetTileHTML(passes) +
+      complianceTileHTML(rows) +
       '<div class="chart-card"><div class="chart-title">Participants by moderator</div>' + barChartHTML(modPairs) + '</div>' +
     '</div>' +
     '<div class="chart-grid-split">' +
@@ -2465,16 +2462,22 @@ function qcCounts(rows) {
            review: rows.filter(s=>s.overallQc==='review').length,
            fail: rows.filter(s=>s.overallQc==='fail').length };
 }
-function targetTileHTML(passes) {
-  if (passes == null) passes = getSessions().filter(s=>s.overallQc==='pass').length;
-  const current = Math.min(COLLECTION_GOAL, COLLECTION_BASELINE + passes);
-  const pct = Math.round((current/COLLECTION_GOAL)*100);
-  const st = pct>=80 ? {c:'ok',t:'On track',d:'up'} : pct>=60 ? {c:'warn',t:'At risk',d:'flat'} : {c:'bad',t:'Behind',d:'down'};
-  const fillVar = pct>=80 ? 'var(--green)' : pct>=60 ? 'var(--amber)' : 'var(--red)';
-  return '<div class="chart-card"><div class="chart-title">Collection target</div>' +
-    '<div style="display:flex;align-items:baseline;gap:6px;"><span class="target-num">' + current + '</span><span class="target-goal">/ ' + COLLECTION_GOAL + '</span></div>' +
+function complianceTileHTML(rows) {
+  if (!rows) rows = filteredSessions();
+  const reviewed  = rows.length;
+  // Compliant = both consent (NDA) and pet vaccination confirmed at check-in.
+  const compliant = rows.filter(s => s.ndaSigned === 'Yes' && s.vaccinationChecked === 'Yes').length;
+  const pct = reviewed ? Math.round((compliant / reviewed) * 100) : 0;
+  let st, fillVar;
+  if (!reviewed)        { st = { c:'warn', t:'No sessions yet', d:'flat' }; fillVar = 'var(--amber)'; }
+  else if (pct >= 95)   { st = { c:'ok',   t:'All compliant',   d:'up'   }; fillVar = 'var(--green)'; }
+  else if (pct >= 80)   { st = { c:'warn', t:'Minor gaps',      d:'flat' }; fillVar = 'var(--amber)'; }
+  else                  { st = { c:'bad',  t:'Check consent',   d:'down' }; fillVar = 'var(--red)';   }
+  return '<div class="chart-card"><div class="chart-title">Session compliance</div>' +
+    '<div style="display:flex;align-items:baseline;gap:6px;"><span class="target-num">' + compliant + '</span><span class="target-goal">/ ' + reviewed + '</span></div>' +
     '<div class="target-bar"><div class="target-fill" style="width:' + pct + '%;background:' + fillVar + ';"></div></div>' +
-    '<span class="status-pill ' + st.c + '">' + svgTrend(st.d) + st.t + '</span></div>';
+    '<span class="status-pill ' + st.c + '">' + svgTrend(st.d) + st.t + '</span>' +
+    '<div style="font-size:11.5px;color:var(--text2);margin-top:8px;">NDA signed + vaccination confirmed</div></div>';
 }
 function donutSVG(c) {
   const total = c.pass + c.review + c.fail;
