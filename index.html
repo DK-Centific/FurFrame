@@ -1637,7 +1637,9 @@ function checkInFormHTML() {
     '<div class="field" style="margin-bottom:14px;"><label>Participant name (first and last) <span style="color:var(--red);">*</span></label>' +
       '<input type="text" data-ci="participantName" value="' + escapeHTML(si.participantName) + '" placeholder="\u2014" /></div>' +
     '<div class="field" style="margin-bottom:16px;"><label>Location / site</label>' +
-      '<div class="locked-field">' + svgMapPin() + 'Redmond</div></div>' +
+      '<select data-ci="location">' +
+        ['Seattle','Redmond'].map(o => '<option value="' + o + '"' + (((si.location||'Redmond')===o)?' selected':'') + '>' + o + '</option>').join('') +
+      '</select></div>' +
     '<div style="display:flex;gap:24px;flex-wrap:wrap;">' +
       '<div class="field"><label>NDA signed <span style="color:var(--red);">*</span></label>' + bigYN('ndaSigned', si.ndaSigned) + '</div>' +
       '<div class="field"><label>Vaccination checked <span style="color:var(--red);">*</span></label>' + bigYN('vaccinationChecked', si.vaccinationChecked) + '</div>' +
