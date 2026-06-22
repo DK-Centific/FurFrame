@@ -464,10 +464,13 @@ textarea.notes::placeholder { color: var(--text3); }
 .ops { border: 0.5px solid var(--border); border-radius: var(--r); overflow: hidden; }
 .ops-row { display: flex; gap: 12px; align-items: flex-start; padding: 13px 15px; }
 .ops-row + .ops-row { border-top: 0.5px solid var(--border); }
-.ops-cat { flex-shrink: 0; min-width: 96px; text-align: center; font-size: 11px; font-weight: 600; padding: 3px 11px; border-radius: 99px; letter-spacing: 0.02em; white-space: nowrap; box-sizing: border-box; }
+.ops-cat { flex-shrink: 0; min-width: 120px; text-align: center; font-size: 11px; font-weight: 600; padding: 3px 11px; border-radius: 99px; letter-spacing: 0.02em; white-space: nowrap; box-sizing: border-box; }
 .ops-cat.furniture { background: var(--blue-bg);  color: var(--blue-text); }
 .ops-cat.props     { background: var(--green-bg); color: var(--green-text); }
 .ops-cat.blind     { background: var(--amber-bg); color: var(--amber-text); }
+.ops-cat.feedback  { background: rgba(239,67,179,0.14); color: var(--accent); }
+.task-note { margin: 10px 0 2px; font-size: 12.5px; line-height: 1.45; color: var(--text); background: rgba(239,67,179,0.08); border-left: 3px solid var(--accent); border-radius: 8px; padding: 9px 12px; }
+.task-note-tag { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); margin-right: 8px; vertical-align: 1px; }
 .ops-text { font-size: 13px; line-height: 1.55; color: var(--text2); }
 
 /* Admin landing tiles */
@@ -803,7 +806,7 @@ const SECTION_A = [
 
 /* Section B — task recording log. Task 0 (Registration) is Light only. */
 const TASKS = [
-  { id: 0,  name: 'Registration',                 zone: 'Near (1-15 ft)',                              lightOnly: true },
+  { id: 0,  name: 'Registration',                 zone: 'Near (1-15 ft)',                              lightOnly: true, note: 'Select \u2018Warehouse\u2019 for the environment metadata field, as previously done during registration.' },
   { id: 1,  name: 'Near-to-Far',                  zone: 'NEAR → FAR' },
   { id: 2,  name: 'Far-to-Near',                  zone: 'FAR → NEAR' },
   { id: 3,  name: 'Far-Only',                     zone: 'FAR (20-32 ft)' },
@@ -981,6 +984,8 @@ async function loadSessions(force) {
 
 /* Operations reminder shown on the FurFrame landing (main page). */
 const OPS_REMINDER = [
+  { cat:'Client feedback', cls:'feedback', text:'Select \u2018Warehouse\u2019 for the environment metadata field, as previously done during registration.' },
+  { cat:'Client feedback', cls:'feedback', text:'Ensure the camera settings match those listed in the SOP \u2014 tap the \u2018i\u2019 icon for the reference point.' },
   { cat:'Furniture',   cls:'furniture', text:'Arrange furniture so it does not obscure participants — they should be able to walk across the room without much difficulty.' },
   { cat:'Props',       cls:'props',     text:'Place plenty of props in both zones for participants to interact with.' },
   { cat:'Blind zones', cls:'blind',     text:'D2, D4 IR mode and D4 RGB have different FOVs. If participants fall out of view from certain angles, add extra markings. D4 IR mode points up, so smaller pets can drop out of view in the Near zone.' },
@@ -1983,6 +1988,7 @@ function taskSectionHTML() {
         '</div>' +
         qcChipHTML(uid, lab) +
       '</div>' +
+      (t.note ? '<div class="task-note"><span class="task-note-tag">Client feedback</span>' + escapeHTML(t.note) + '</div>' : '') +
       '<div class="ctrls">' +
         '<div class="ctrl"><span class="ctrl-label">R1 light</span>' + segYNN('B', t.id, 'r1', r.r1) + '</div>' +
         (t.lightOnly ? '' : '<div class="ctrl"><span class="ctrl-label">R2 dark</span>' + segYNN('B', t.id, 'r2', r.r2) + '</div>') +
